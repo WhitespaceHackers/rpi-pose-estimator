@@ -1,9 +1,8 @@
 const posenet = require('@tensorflow-models/posenet');
 const tfnode  = require('@tensorflow/tfjs-node');
-const fs = require('fs')
+const fs = require('fs');
+const axios = require('axios');
 
-const height = 200;
-const width = 257;
 
 const readImage = path => {
     const imageBuffer = fs.readFileSync(path);
@@ -14,18 +13,39 @@ const readImage = path => {
 
 async function estimatePoseOnImage(imageElement) {
     // load the posenet model from a checkpoint
-    // const net = await posenet.load();
     const net = await posenet.load({
-        architecture: 'ResNet50',
-        outputStride: 32,
-        inputResolution: { width: 257, height: 200 },
-        quantBytes: 2
+        architecture: 'MobileNetV1',
+        outputStride: 16,
+        inputResolution: { width: 257, height: 257 },
+        multiplier: 0.5 // For mobile
     });
+    // const net = await posenet.load({
+    //     architecture: 'ResNet50',
+    //     outputStride: 32,
+    //     inputResolution: { width: 257, height: 200 },
+    //     quantBytes: 2
+    // });
 
     const pose = await net.estimateSinglePose(imageElement, {
         flipHorizontal: false
     });
     return pose;
+}
+
+function fallDectection(pose) {
+    const threshold = 0.1;
+    const keypoints = pose.keypoints;
+    let y_coordinates = 0;
+    let counter = 0;
+    for (p in keypoints) {
+        if (keypoints[p].score > threshold) {
+            y_coordinates += keypoints[p]['position']['y'];
+            counter += 1;
+        }
+    }
+    const avg_y = y_coordinates / counter;
+    return avg_y > (350);
+
 }
 
 const RaspiCam = require("raspicam");
@@ -34,7 +54,7 @@ const camera = new RaspiCam({
     mode: "photo",
     output: "/home/pi/hackathon/whitespace/images/photos_%d.jpg",
     timeout: 100000,
-    timelapse: 10000,
+    timelapse: 1000,
     width: 640,
     height: 480,
     nopreview: true,
@@ -52,22 +72,32 @@ camera.on("start", function(){
 //listen for the "read" event triggered when each new photo/video is saved
 camera.on("read", function(err, timestamp, filename){
     //do stuff
-    console.log("read callback");
-    console.log(filename);
+    const start = Date.now();
 
     const pose = estimatePoseOnImage(readImage(`images/${filename}`));
 
     pose.then(data => {
-        console.log('score :' + data.score);
-        for (point in data.keypoints) {
-            const _point = data.keypoints[point];
-            console.log('body part: ' + _point.part);
-            console.log('score: ' + _point.score);
-            console.log('coordinates: (' + _point.position.x + ', ' + _point.position.y + ')');
-            console.log();
-        };
-        var json = JSON.stringify(data);
+        // console.log(data);
+        const fall = fallDectection(data);
+        console.log('fall detected: : ' + fall);
+        data.fall = fall;
+        const json = JSON.stringify(data);
         fs.writeFile(`pose_estimates/${filename.replace('jpg','json')}`, json, 'utf8', () => {});
+
+        // send data to server
+        axios.post('https://mdjj-api.us-south.cf.appdomain.cloud/rpi', data)
+            .then(res => {
+                console.log(filename + ' sent successfully');
+                // console.log(res);
+            })
+            .catch(err => {
+                console.log('unsuccessfully');
+                console.log(err);
+            });
+
+        // log execution time
+        const end = Date.now();
+        console.log('execution time: ' + (end - start) + 'ms');
     })
         .catch((err) => {
             console.log('error');
