@@ -68,7 +68,6 @@ const camera = new RaspiCam({
     width: 640,
     height: 480,
     nopreview: true,
-
 });
 
 //to take a snapshot, start a timelapse or video recording
@@ -114,8 +113,6 @@ camera.on("read", function(err, timestamp, filename) {
             console.log('error');
             console.log(err);
         });
-
-
 });
 
 //listen for the "stop" event triggered when the stop method was called
